@@ -41,6 +41,12 @@
         <projectService
             serviceImplementation="com.example.localai.orchestration.RequestOrchestratorService"/>
 
+        <!-- Retrieval Services -->
+        <projectService
+            serviceImplementation="com.example.localai.retrieval.StructuralScanService"/>
+        <projectService
+            serviceImplementation="com.example.localai.retrieval.RepoTypeClassifierService"/>
+
         <!-- Tool Window -->
         <toolWindow id="Local AI"
                     anchor="right"

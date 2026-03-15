@@ -43,43 +43,62 @@ enum class PipelineStage {
 }
 
 /**
- * Mutable session state — holds the full context of an active task.
+ * Mutable session state — composes ExecutionState + TraceState.
+ *
+ * Architecture: SessionState is the top-level composite that holds both
+ * execution control (phase, pipeline, stop/clear) and observability
+ * (timeline, evidence, artifacts). Consumers can access the sub-states
+ * directly or use the convenience delegates on SessionState.
  */
 class SessionState {
-    var executionPhase: ExecutionPhase = ExecutionPhase.IDLE
-    var pipelineStage: PipelineStage = PipelineStage.NOT_STARTED
+
+    /** Execution control: phase, pipeline stage, stop/clear. */
+    val execution = ExecutionState()
+
+    /** Observability: timeline, evidence, artifacts. */
+    val trace = TraceState()
+
+    // === Convenience delegates (backward compatibility) ===
+
+    var executionPhase: ExecutionPhase
+        get() = execution.executionPhase
+        set(value) { execution.executionPhase = value }
+
+    var pipelineStage: PipelineStage
+        get() = execution.pipelineStage
+        set(value) { execution.pipelineStage = value }
+
+    var stopRequested: Boolean
+        get() = execution.stopRequested
+        set(value) { execution.stopRequested = value }
+
+    var clearRequested: Boolean
+        get() = execution.clearRequested
+        set(value) { execution.clearRequested = value }
+
+    val timeline: MutableList<TimelineEntry> get() = trace.timeline
+    val evidence: MutableList<EvidenceRecord> get() = trace.evidence
+    val artifacts: MutableList<ExecutionArtifact> get() = trace.artifacts
+
+    // === Domain state ===
+
     var requestInterpretation: RequestInterpretation? = null
     var repoType: RepoType = RepoType.UNKNOWN
-
     val messages: MutableList<ChatMessage> = mutableListOf()
-    val timeline: MutableList<TimelineEntry> = mutableListOf()
-    val evidence: MutableList<EvidenceRecord> = mutableListOf()
-    val artifacts: MutableList<ExecutionArtifact> = mutableListOf()
 
-    @Volatile
-    var stopRequested: Boolean = false
-
-    @Volatile
-    var clearRequested: Boolean = false
+    /**
+     * Check if execution should be halted.
+     */
+    fun shouldStop(): Boolean = execution.shouldStop()
 
     /**
      * Reset everything — used by Clear.
      */
     fun clear() {
-        executionPhase = ExecutionPhase.IDLE
-        pipelineStage = PipelineStage.NOT_STARTED
+        execution.reset()
+        trace.clear()
         requestInterpretation = null
         repoType = RepoType.UNKNOWN
         messages.clear()
-        timeline.clear()
-        evidence.clear()
-        artifacts.clear()
-        stopRequested = false
-        clearRequested = false
     }
-
-    /**
-     * Check if execution should be halted.
-     */
-    fun shouldStop(): Boolean = stopRequested || clearRequested
 }

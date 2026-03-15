@@ -64,24 +64,41 @@ class PipelineCoordinatorService(private val project: Project) {
                 "Evidence gaps: ${gateResult.gaps.joinToString(", ")}")
         }
 
-        // Stage 4: Build Report
+        // Stage 4: Build Deterministic Report (used as LLM context)
         if (session.shouldStop()) return "[Stopped]"
         session.executionPhase = ExecutionPhase.BUILDING_ARTIFACTS
         session.pipelineStage = PipelineStage.ARTIFACTS_BUILT
-        trace(session, TimelineEventType.ARTIFACT_CREATED, "Building structured report...")
+        trace(session, TimelineEventType.ARTIFACT_CREATED, "Building evidence context...")
 
-        val report = buildDeterministicReport(skeleton, repoType, basePath)
+        val deterministicReport = buildDeterministicReport(skeleton, repoType, basePath)
 
-        // Stage 5: LLM Synthesis (project description only)
+        // Stage 5: Decide pipeline path based on task type
+        val isAnalysisOnly = interpretation.taskType in setOf(
+            TaskType.PROJECT_OVERVIEW,
+            TaskType.REPO_ANALYSIS,
+            TaskType.BUILD_AND_RUN_ANALYSIS
+        )
+
+        // Stage 6: Task-Aware LLM Synthesis
         if (session.shouldStop()) return "[Stopped]"
         session.executionPhase = ExecutionPhase.WAITING_FOR_LLM
-        trace(session, TimelineEventType.SYNTHESIS_START, "LLM generating project description...")
+        trace(session, TimelineEventType.SYNTHESIS_START,
+            if (isAnalysisOnly) "LLM: generating project description..."
+            else "LLM: processing user request with ${skeleton.sourceFiles.size} source files as context...")
 
-        val description = generateProjectDescription(skeleton)
+        val llmResponse: String
+        if (isAnalysisOnly) {
+            // For analysis tasks: just generate a brief project description
+            llmResponse = generateProjectDescription(skeleton)
+        } else {
+            // For ALL other tasks: send user's ACTUAL prompt + evidence context to Ollama
+            llmResponse = executeTaskAwareSynthesis(interpretation, skeleton, deterministicReport, session)
+        }
+
         session.pipelineStage = PipelineStage.FINAL_SYNTHESIS_DONE
-        trace(session, TimelineEventType.SYNTHESIS_FINISH, "Synthesis complete")
+        trace(session, TimelineEventType.SYNTHESIS_FINISH, "LLM synthesis complete (${llmResponse.length} chars)")
 
-        // Combine: orchestration metadata + deterministic report
+        // Stage 7: Assemble final output
         session.executionPhase = ExecutionPhase.READY
         val sb = StringBuilder()
 
@@ -119,21 +136,223 @@ class PipelineCoordinatorService(private val project: Project) {
         sb.appendLine("L. Repo Type: $repoType")
         sb.appendLine("M. Evidence Gate: ${if (gateResult.passed) "PASSED (${gateResult.foundCount}/${gateResult.totalChecks})" else "FAILED — gaps: ${gateResult.gaps.joinToString(", ")}"}")
         sb.appendLine()
-        sb.appendLine("═══ DETERMINISTIC REPORT ═══")
-        sb.appendLine()
 
-        // === Project Description (from LLM) ===
-        sb.appendLine("N. Что это за проект")
-        sb.appendLine(description)
-        sb.appendLine()
-
-        // === Deterministic sections (O+) ===
-        sb.append(report)
+        if (isAnalysisOnly) {
+            // For analysis tasks: show deterministic report
+            sb.appendLine("═══ DETERMINISTIC REPORT ═══")
+            sb.appendLine()
+            sb.appendLine("N. Что это за проект")
+            sb.appendLine(llmResponse)
+            sb.appendLine()
+            sb.append(deterministicReport)
+        } else {
+            // For generation/review tasks: show LLM response
+            sb.appendLine("═══ LLM RESPONSE (task-aware synthesis) ═══")
+            sb.appendLine()
+            sb.appendLine(llmResponse)
+            sb.appendLine()
+            sb.appendLine("═══ SUPPORTING EVIDENCE (deterministic scan) ═══")
+            sb.appendLine()
+            sb.append(deterministicReport)
+        }
 
         val finalReport = sb.toString()
 
         trace(session, TimelineEventType.FINAL_TEXT, "Report ready (${finalReport.length} chars)")
         return finalReport
+    }
+
+    // ==================== TASK-AWARE LLM SYNTHESIS ====================
+
+    /**
+     * Send the user's actual prompt to Ollama with the gathered evidence as grounding context.
+     * This is the core differentiator from a simple chat wrapper:
+     * the LLM receives VERIFIED project facts, not hallucinated assumptions.
+     */
+    private fun executeTaskAwareSynthesis(
+        interpretation: RequestInterpretation,
+        skeleton: ProjectSkeleton,
+        deterministicReport: String,
+        session: SessionState
+    ): String {
+        val client = com.intellij.openapi.application.ApplicationManager.getApplication()
+            .getService(com.example.localai.services.OllamaClientService::class.java)
+        val settings = com.example.localai.settings.LocalAiSettingsState.instance
+
+        // Build context from evidence
+        val contextBlock = buildLlmContext(skeleton, deterministicReport)
+
+        // Build system prompt based on task type
+        val systemPrompt = buildSystemPrompt(interpretation, skeleton)
+
+        // Build user message: context + original prompt
+        val userMessage = """
+=== VERIFIED PROJECT CONTEXT (from deterministic analysis) ===
+
+$contextBlock
+
+=== USER REQUEST ===
+
+${interpretation.userIntent}
+""".trimIndent()
+
+        trace(session, TimelineEventType.MODEL_CALL_START,
+            "Sending to Ollama: ${systemPrompt.length + userMessage.length} chars context")
+
+        val messages = listOf(
+            mapOf("role" to "system", "content" to systemPrompt),
+            mapOf("role" to "user", "content" to userMessage)
+        )
+
+        return try {
+            val response = client.chat(settings.defaultModel, messages, formatJson = false)
+            trace(session, TimelineEventType.MODEL_CALL_FINISH,
+                "Ollama responded: ${response.length} chars")
+            response
+        } catch (e: Exception) {
+            trace(session, TimelineEventType.ERROR, "LLM error: ${e.message}")
+            "LLM Error: ${e.javaClass.simpleName}: ${e.message}\n\nThe deterministic report below contains all verified evidence."
+        }
+    }
+
+    /**
+     * Build a compact context block from the evidence for the LLM.
+     */
+    private fun buildLlmContext(skeleton: ProjectSkeleton, deterministicReport: String): String {
+        val sb = StringBuilder()
+
+        sb.appendLine("Project: ${skeleton.projectName}")
+        sb.appendLine("Languages: ${skeleton.languages.joinToString(", ")}")
+        sb.appendLine("Build: ${skeleton.buildSystem}")
+        if (skeleton.uiFramework != null) sb.appendLine("UI: ${skeleton.uiFramework}")
+        sb.appendLine("Target OS: ${skeleton.targetOS ?: "Unknown"}")
+        sb.appendLine("Source files: ${skeleton.sourceFiles.size}")
+        sb.appendLine("Entry points: ${skeleton.entryPoints.size}")
+        sb.appendLine()
+
+        // Include class/method map
+        sb.appendLine("=== Class & Method Map ===")
+        for (sf in skeleton.sourceFiles) {
+            sb.appendLine("${sf.path} (${sf.lang}, ${sf.lines} lines)")
+            if (sf.classes.isNotEmpty()) sb.appendLine("  Classes: ${sf.classes.joinToString(", ")}")
+            if (sf.methods.isNotEmpty()) sb.appendLine("  Methods: ${sf.methods.joinToString(", ")}")
+            sb.appendLine("  main(): ${sf.hasMain}")
+        }
+        sb.appendLine()
+
+        // Include README if available
+        if (skeleton.readme != null) {
+            sb.appendLine("=== README (first 3000 chars) ===")
+            sb.appendLine(skeleton.readme.take(3000))
+            sb.appendLine()
+        }
+
+        // Include representative source code snippets
+        sb.appendLine("=== Source Code Snippets ===")
+        val basePath = com.intellij.openapi.application.ApplicationManager.getApplication()
+            .getService(com.example.localai.settings.LocalAiSettingsState::class.java)
+        // Read key source files for context (limit to keep token count manageable)
+        for (sf in skeleton.sourceFiles.sortedByDescending { it.lines }.take(3)) {
+            val file = java.io.File(skeleton.projectName).parentFile?.let { java.io.File(it, sf.path) }
+                ?: continue
+            // Try to read from the actual basePath
+            val content = skeleton.entryPoints.find { it.file == sf.path }?.codeSnippet
+            if (content != null && content.isNotEmpty()) {
+                sb.appendLine("--- ${sf.path} (entry point) ---")
+                sb.appendLine(content)
+                sb.appendLine()
+            }
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * Build a task-specific system prompt for Ollama.
+     */
+    private fun buildSystemPrompt(interpretation: RequestInterpretation, skeleton: ProjectSkeleton): String {
+        val base = "You are a senior software engineer. You have been given VERIFIED, DETERMINISTIC facts about a project. " +
+            "These facts come from automated source code analysis, NOT from guessing. " +
+            "Use ONLY these facts as your foundation. Do NOT invent files, classes, or APIs that are not in the evidence. " +
+            "Write your response in Russian unless the user's prompt is in English."
+
+        val taskSpecific = when (interpretation.taskType) {
+            TaskType.ARCHITECTURE_REVIEW -> """
+                |You are conducting an architecture review. Based on the verified evidence:
+                |1. Analyze the project structure and patterns
+                |2. Identify strengths and weaknesses
+                |3. Provide specific, actionable recommendations
+                |4. Reference actual files, classes, and methods from the evidence
+            """.trimMargin()
+
+            TaskType.SECURITY_REVIEW -> """
+                |You are conducting a security review. Based on the verified evidence:
+                |1. Check for hardcoded credentials, IPs, URLs
+                |2. Analyze authentication and authorization patterns
+                |3. Review input validation and error handling
+                |4. Reference actual code locations
+            """.trimMargin()
+
+            TaskType.CODE_QUALITY_REVIEW -> """
+                |You are reviewing code quality. Based on the verified evidence:
+                |1. Identify code smells and duplication
+                |2. Check naming conventions and consistency
+                |3. Evaluate error handling patterns
+                |4. Suggest specific refactoring targets with file/class references
+            """.trimMargin()
+
+            TaskType.IMPLEMENT_FEATURE, TaskType.FULLSTACK_FEATURE,
+            TaskType.API_DESIGN, TaskType.FRONTEND_DESIGN, TaskType.BACKEND_DESIGN -> """
+                |You are implementing a feature. Based on the verified project evidence:
+                |1. Understand the existing codebase structure
+                |2. Design your solution to fit the existing patterns
+                |3. Produce complete, working code
+                |4. Explain where each file should be placed
+                |5. If tests are requested, create real test code with actual test methods
+            """.trimMargin()
+
+            TaskType.PLAN_ONLY -> """
+                |You are creating a technical implementation plan. Based on the verified evidence:
+                |1. Break down the work into concrete steps
+                |2. Reference actual files and classes that need to be modified
+                |3. Identify risks and dependencies
+                |4. Estimate complexity per step
+            """.trimMargin()
+
+            TaskType.BUG_ANALYSIS -> """
+                |You are analyzing a bug. Based on the verified evidence:
+                |1. Trace the likely execution path
+                |2. Identify where the bug could originate
+                |3. Check error handling in the relevant code
+                |4. Suggest specific fixes with code
+            """.trimMargin()
+
+            TaskType.VERIFY_FEATURE, TaskType.SYSTEM_VALIDATION -> """
+                |You are verifying feature implementation. Based on the verified evidence:
+                |1. Check if the feature exists in the codebase
+                |2. Verify completeness against requirements
+                |3. Identify gaps or missing parts
+                |4. Report with evidence references
+            """.trimMargin()
+
+            TaskType.SEARCH_ONLY -> """
+                |You are searching the codebase. Based on the verified evidence:
+                |1. Find the relevant code locations
+                |2. Show exact file paths and code snippets
+                |3. Explain what you found
+            """.trimMargin()
+
+            TaskType.DOCS_ALIGNMENT -> """
+                |You are checking documentation alignment. Based on the verified evidence:
+                |1. Compare docs against actual codebase
+                |2. Identify mismatches
+                |3. Suggest corrections
+            """.trimMargin()
+
+            else -> "Fulfill the user's request using the verified project evidence."
+        }
+
+        return "$base\n\n$taskSpecific"
     }
 
     // ==================== STRUCTURAL SCAN ====================

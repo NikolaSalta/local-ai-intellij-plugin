@@ -25,11 +25,17 @@
         <projectService
             serviceImplementation="com.example.localai.services.ChatSessionService"/>
         <projectService
-            serviceImplementation="com.example.localai.services.AgentLoopService"/>
-        <projectService
             serviceImplementation="com.example.localai.services.ContextAssemblerService"/>
         <projectService
             serviceImplementation="com.example.localai.services.ProjectAnalysisRunner"/>
+
+        <!-- Orchestration Services -->
+        <projectService
+            serviceImplementation="com.example.localai.orchestration.TargetResolutionService"/>
+        <projectService
+            serviceImplementation="com.example.localai.orchestration.PipelineCoordinatorService"/>
+        <projectService
+            serviceImplementation="com.example.localai.orchestration.RequestOrchestratorService"/>
 
         <!-- Tool Window -->
         <toolWindow id="Local AI"

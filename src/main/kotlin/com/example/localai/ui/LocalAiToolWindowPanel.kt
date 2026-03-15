@@ -5,6 +5,7 @@ import com.example.localai.model.ChatMode
 import com.example.localai.model.ChatRole
 import com.example.localai.model.PlanResponse
 import com.example.localai.model.TimelineEntry
+import com.example.localai.model.TimelineEventType
 import com.example.localai.services.ChatSessionService
 import com.example.localai.services.ContextAssemblerService
 import com.example.localai.services.OllamaClientService
@@ -46,9 +47,11 @@ class LocalAiToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     private val timelinePanel = JPanel()
     private val composerInput = JTextArea(3, 40)
     private val statusLabel = JLabel("Ready")
+    private val targetLabel = JLabel("Target: —")
     private val modeCombo = JComboBox(ChatMode.entries.toTypedArray())
     private val modelCombo = JComboBox<String>()
     private val sendButton = JButton("Send")
+    private val stopButton = JButton("■ Stop")
     private val clearButton = JButton("Clear")
     private val refreshModelsButton = JButton("↻")
 
@@ -62,16 +65,26 @@ class LocalAiToolWindowPanel(private val project: Project) : JPanel(BorderLayout
 
     private fun buildUI() {
         // === HEADER ===
-        val headerPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
-        headerPanel.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
-        headerPanel.add(JLabel("Mode:"))
+        val headerRow1 = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
+        headerRow1.add(JLabel("Mode:"))
         modeCombo.selectedItem = ChatMode.ASK
-        headerPanel.add(modeCombo)
-        headerPanel.add(JLabel("Model:"))
+        headerRow1.add(modeCombo)
+        headerRow1.add(JLabel("Model:"))
         modelCombo.preferredSize = Dimension(200, modelCombo.preferredSize.height)
-        headerPanel.add(modelCombo)
+        headerRow1.add(modelCombo)
         refreshModelsButton.toolTipText = "Refresh model list from Ollama"
-        headerPanel.add(refreshModelsButton)
+        headerRow1.add(refreshModelsButton)
+
+        val headerRow2 = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
+        targetLabel.font = targetLabel.font.deriveFont(Font.ITALIC, 10f)
+        targetLabel.foreground = JBColor(Color(80, 100, 130), Color(140, 160, 190))
+        headerRow2.add(targetLabel)
+
+        val headerPanel = JPanel()
+        headerPanel.layout = BoxLayout(headerPanel, BoxLayout.Y_AXIS)
+        headerPanel.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
+        headerPanel.add(headerRow1)
+        headerPanel.add(headerRow2)
 
         // === CONTEXT CHIPS ===
         contextChipsPanel.border = BorderFactory.createCompoundBorder(
@@ -114,8 +127,13 @@ class LocalAiToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         val buttonPanel = JPanel()
         buttonPanel.layout = BoxLayout(buttonPanel, BoxLayout.Y_AXIS)
         sendButton.alignmentX = Component.CENTER_ALIGNMENT
+        stopButton.alignmentX = Component.CENTER_ALIGNMENT
         clearButton.alignmentX = Component.CENTER_ALIGNMENT
+        stopButton.foreground = JBColor(Color(200, 50, 50), Color(255, 100, 100))
+        stopButton.isEnabled = false
         buttonPanel.add(sendButton)
+        buttonPanel.add(Box.createVerticalStrut(4))
+        buttonPanel.add(stopButton)
         buttonPanel.add(Box.createVerticalStrut(4))
         buttonPanel.add(clearButton)
 
@@ -146,8 +164,13 @@ class LocalAiToolWindowPanel(private val project: Project) : JPanel(BorderLayout
 
     private fun setupListeners() {
         sendButton.addActionListener { sendMessage() }
+        stopButton.addActionListener {
+            chatSession.stopExecution()
+            stopButton.isEnabled = false
+        }
         clearButton.addActionListener {
             chatSession.clearSession()
+            targetLabel.text = "Target: —"
             refreshUI()
         }
         refreshModelsButton.addActionListener { loadModels() }
@@ -178,11 +201,21 @@ class LocalAiToolWindowPanel(private val project: Project) : JPanel(BorderLayout
 
         composerInput.text = ""
         statusLabel.text = "Processing..."
+        stopButton.isEnabled = true
+        sendButton.isEnabled = false
 
         ApplicationManager.getApplication().executeOnPooledThread {
             chatSession.sendMessage(text)
             SwingUtilities.invokeLater {
                 statusLabel.text = "Ready"
+                stopButton.isEnabled = false
+                sendButton.isEnabled = true
+                // Update target display
+                val interp = chatSession.sessionState.requestInterpretation
+                if (interp != null) {
+                    val targetName = interp.primaryTarget.substringAfterLast("/")
+                    targetLabel.text = "Target: $targetName | Type: ${interp.taskType} | Repo: ${chatSession.sessionState.repoType}"
+                }
                 refreshContextChips()
             }
         }
@@ -347,13 +380,43 @@ class LocalAiToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         timelinePanel.removeAll()
         val dateFormat = SimpleDateFormat("HH:mm:ss")
 
-        for (entry in chatSession.timeline) {
-            val label = JLabel("${dateFormat.format(Date(entry.timestamp))} [${entry.eventType}] ${entry.description}")
+        // Merge main timeline + session state timeline
+        val allEntries = (chatSession.timeline + chatSession.sessionState.timeline)
+            .distinctBy { "${it.timestamp}_${it.eventType}_${it.description}" }
+            .sortedBy { it.timestamp }
+
+        for (entry in allEntries) {
+            val icon = when (entry.eventType) {
+                TimelineEventType.REQUEST_PARSED -> "📥"
+                TimelineEventType.TASK_CLASSIFIED -> "🏷"
+                TimelineEventType.TARGET_RESOLVED -> "🎯"
+                TimelineEventType.STRATEGY_SELECTED -> "⚙"
+                TimelineEventType.STRUCTURAL_SCAN_START, TimelineEventType.STRUCTURAL_SCAN_FINISH -> "🔍"
+                TimelineEventType.REPO_TYPE_DETECTED -> "📦"
+                TimelineEventType.EVIDENCE_GATE_CHECK, TimelineEventType.EVIDENCE_GATE_PASSED -> "✅"
+                TimelineEventType.EVIDENCE_GATE_FAILED -> "⚠"
+                TimelineEventType.MODEL_CALL_START, TimelineEventType.MODEL_CALL_FINISH -> "🤖"
+                TimelineEventType.SYNTHESIS_START, TimelineEventType.SYNTHESIS_FINISH -> "✨"
+                TimelineEventType.ARTIFACT_CREATED -> "📄"
+                TimelineEventType.FINAL_TEXT -> "✅"
+                TimelineEventType.ERROR -> "❌"
+                TimelineEventType.STOP_REQUESTED -> "⏹"
+                else -> "•"
+            }
+            val label = JLabel("$icon ${dateFormat.format(Date(entry.timestamp))} ${entry.description}")
             label.font = Font("Monospaced", Font.PLAIN, 10)
             label.foreground = when (entry.eventType) {
-                com.example.localai.model.TimelineEventType.ERROR -> JBColor.RED
-                com.example.localai.model.TimelineEventType.FINAL_TEXT -> JBColor(Color(0, 130, 80), Color(80, 200, 140))
-                com.example.localai.model.TimelineEventType.LOOP_STOP -> JBColor(Color(200, 130, 0), Color(255, 200, 80))
+                TimelineEventType.ERROR -> JBColor.RED
+                TimelineEventType.FINAL_TEXT, TimelineEventType.EVIDENCE_GATE_PASSED ->
+                    JBColor(Color(0, 130, 80), Color(80, 200, 140))
+                TimelineEventType.TASK_CLASSIFIED, TimelineEventType.TARGET_RESOLVED,
+                TimelineEventType.STRATEGY_SELECTED, TimelineEventType.REQUEST_PARSED ->
+                    JBColor(Color(50, 90, 180), Color(100, 150, 230))
+                TimelineEventType.STRUCTURAL_SCAN_START, TimelineEventType.STRUCTURAL_SCAN_FINISH,
+                TimelineEventType.REPO_TYPE_DETECTED ->
+                    JBColor(Color(140, 100, 20), Color(220, 180, 80))
+                TimelineEventType.STOP_REQUESTED, TimelineEventType.EVIDENCE_GATE_FAILED ->
+                    JBColor(Color(200, 100, 0), Color(255, 160, 60))
                 else -> JBColor.foreground()
             }
             label.border = EmptyBorder(1, 4, 1, 4)

@@ -1,0 +1,24 @@
+# IntelliJ Plugin Build
+build/
+out/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Gradle
+.gradle/
+!gradle/
+gradle-app.setting
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kotlin
+*.class
+bin/

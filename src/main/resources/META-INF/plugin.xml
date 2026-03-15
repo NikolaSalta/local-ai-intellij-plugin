@@ -1,0 +1,56 @@
+<idea-plugin>
+    <id>com.example.localai</id>
+    <name>Local AI Assistant</name>
+    <version>1.0.0</version>
+    <vendor>Local AI</vendor>
+
+    <description><![CDATA[
+    A local Cursor-like AI coding assistant powered by Ollama.
+    Supports ASK, PLAN, and AGENT modes with read-only workspace tools.
+    Fully local — no cloud APIs, no remote backends.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Application Services -->
+        <applicationService
+            serviceImplementation="com.example.localai.services.OllamaClientService"/>
+        <applicationService
+            serviceImplementation="com.example.localai.services.ModelProfileRegistry"/>
+        <applicationService
+            serviceImplementation="com.example.localai.settings.LocalAiSettingsState"/>
+
+        <!-- Project Services -->
+        <projectService
+            serviceImplementation="com.example.localai.services.ChatSessionService"/>
+        <projectService
+            serviceImplementation="com.example.localai.services.AgentLoopService"/>
+        <projectService
+            serviceImplementation="com.example.localai.services.ContextAssemblerService"/>
+        <projectService
+            serviceImplementation="com.example.localai.services.ProjectAnalysisRunner"/>
+
+        <!-- Tool Window -->
+        <toolWindow id="Local AI"
+                    anchor="right"
+                    factoryClass="com.example.localai.ui.LocalAiToolWindowFactory"
+                    icon="AllIcons.Actions.Lightning"/>
+
+        <!-- Settings -->
+        <applicationConfigurable
+            parentId="tools"
+            instance="com.example.localai.settings.LocalAiSettingsConfigurable"
+            id="com.example.localai.settings.LocalAiSettingsConfigurable"
+            displayName="Local AI Settings"/>
+    </extensions>
+
+    <actions>
+        <action id="com.example.localai.OpenLocalAi"
+                class="com.example.localai.actions.OpenLocalAiAction"
+                text="Open Local AI"
+                description="Open the Local AI assistant tool window">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

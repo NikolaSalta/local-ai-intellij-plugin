@@ -7,7 +7,7 @@ import com.example.localai.model.PlanResponse
 import com.example.localai.model.TimelineEntry
 import com.example.localai.model.TimelineEventType
 import com.example.localai.services.ChatSessionService
-import com.example.localai.services.ContextAssemblerService
+import com.example.localai.context.IdeContextService
 import com.example.localai.llm.OllamaClientService
 import com.example.localai.settings.LocalAiSettingsState
 import com.intellij.openapi.application.ApplicationManager
@@ -40,7 +40,7 @@ import javax.swing.border.EmptyBorder
 class LocalAiToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val chatSession: ChatSessionService = project.getService(ChatSessionService::class.java)
-    private val contextAssembler: ContextAssemblerService = project.getService(ContextAssemblerService::class.java)
+    private val contextAssembler: IdeContextService = project.getService(IdeContextService::class.java)
 
     private val messageListPanel = JPanel()
     private val contextChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))

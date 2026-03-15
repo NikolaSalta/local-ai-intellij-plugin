@@ -28,10 +28,16 @@
         <!-- Project Services -->
         <projectService
             serviceImplementation="com.example.localai.services.ChatSessionService"/>
+
+        <!-- Context Services -->
         <projectService
-            serviceImplementation="com.example.localai.services.ContextAssemblerService"/>
+            serviceImplementation="com.example.localai.context.IdeContextService"/>
+
+        <!-- Evidence Services -->
         <projectService
-            serviceImplementation="com.example.localai.services.ProjectAnalysisRunner"/>
+            serviceImplementation="com.example.localai.evidence.EvidenceGateService"/>
+        <projectService
+            serviceImplementation="com.example.localai.evidence.EvidenceRegistryService"/>
 
         <!-- Orchestration Services -->
         <projectService

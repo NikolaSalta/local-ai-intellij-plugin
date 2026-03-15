@@ -1,6 +1,7 @@
-package com.example.localai.services
+package com.example.localai.context
 
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -10,9 +11,12 @@ import kotlin.math.min
 
 /**
  * Project-level service that collects IDE context for AI conversations.
- * Constructor takes Project only (IntelliJ project-service rule).
+ *
+ * Gathers: current file, selection, editor fragment, open files, project root.
+ * All IntelliJ API access is wrapped in ReadAction for thread safety.
  */
-class ContextAssemblerService(private val project: Project) {
+@Service(Service.Level.PROJECT)
+class IdeContextService(private val project: Project) {
 
     companion object {
         private const val MAX_SELECTION_CHARS = 2000
@@ -32,7 +36,6 @@ class ContextAssemblerService(private val project: Project) {
 
     /**
      * Assembles the current IDE context into a structured object.
-     * Wraps all IntelliJ API access in ReadAction to be safe from any thread.
      */
     fun assembleContext(): IdeContext {
         val settings = com.example.localai.settings.LocalAiSettingsState.instance
@@ -55,28 +58,22 @@ class ContextAssemblerService(private val project: Project) {
                 val selectedText = editor?.selectionModel?.selectedText?.take(MAX_SELECTION_CHARS)
 
                 val editorFragment = editor?.let { ed ->
-                    val document = ed.document
-                    val caretLine = ed.caretModel.logicalPosition.line
-                    val startLine = max(0, caretLine - FRAGMENT_LINES_RADIUS)
-                    val endLine = min(document.lineCount - 1, caretLine + FRAGMENT_LINES_RADIUS)
-                    if (startLine <= endLine && document.lineCount > 0) {
-                        val startOffset = document.getLineStartOffset(startLine)
-                        val endOffset = document.getLineEndOffset(endLine)
-                        document.getText(com.intellij.openapi.util.TextRange(startOffset, endOffset))
-                            .take(MAX_FRAGMENT_CHARS)
-                    } else {
-                        null
-                    }
+                    val doc = ed.document
+                    val offset = ed.caretModel.offset
+                    val line = doc.getLineNumber(offset)
+                    val startLine = max(0, line - FRAGMENT_LINES_RADIUS)
+                    val endLine = min(doc.lineCount - 1, line + FRAGMENT_LINES_RADIUS)
+                    val startOffset = doc.getLineStartOffset(startLine)
+                    val endOffset = doc.getLineEndOffset(endLine)
+                    doc.text.substring(startOffset, endOffset).take(MAX_FRAGMENT_CHARS)
                 }
 
                 val openFileHints = editorManager.openFiles
                     .take(MAX_OPEN_FILES)
-                    .map { file ->
-                        if (projectRoot != null && file.path.startsWith(projectRoot)) {
-                            file.path.removePrefix(projectRoot).removePrefix("/")
-                        } else {
-                            file.name
-                        }
+                    .map { vf ->
+                        if (projectRoot != null && vf.path.startsWith(projectRoot)) {
+                            vf.path.removePrefix(projectRoot).removePrefix("/")
+                        } else vf.path
                     }
 
                 IdeContext(
@@ -89,7 +86,6 @@ class ContextAssemblerService(private val project: Project) {
                 )
             }
         } catch (e: Exception) {
-            // Fallback: return minimal context if ReadAction fails
             IdeContext(
                 projectRoot = projectRoot,
                 currentFilePath = null,
@@ -99,36 +95,5 @@ class ContextAssemblerService(private val project: Project) {
                 embeddingModel = settings.embeddingModel
             )
         }
-    }
-
-    /**
-     * Formats IDE context into a system message string for the LLM.
-     */
-    fun formatContextAsSystemMessage(context: IdeContext): String {
-        val parts = mutableListOf<String>()
-
-        parts.add("You are a helpful AI coding assistant. You have access to the user's IDE context.")
-
-        context.projectRoot?.let {
-            parts.add("Project root: $it")
-        }
-
-        context.currentFilePath?.let {
-            parts.add("Currently open file: $it")
-        }
-
-        context.selectedText?.let {
-            parts.add("Selected text:\n```\n$it\n```")
-        }
-
-        context.editorFragment?.let {
-            parts.add("Editor context (around cursor):\n```\n$it\n```")
-        }
-
-        if (context.openFileHints.isNotEmpty()) {
-            parts.add("Open files: ${context.openFileHints.joinToString(", ")}")
-        }
-
-        return parts.joinToString("\n\n")
     }
 }

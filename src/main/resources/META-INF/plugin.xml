@@ -13,11 +13,15 @@
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Application Services -->
+        <!-- Application Services: LLM Layer -->
         <applicationService
-            serviceImplementation="com.example.localai.services.OllamaClientService"/>
+            serviceImplementation="com.example.localai.llm.OllamaClientService"/>
         <applicationService
-            serviceImplementation="com.example.localai.services.ModelProfileRegistry"/>
+            serviceImplementation="com.example.localai.llm.ModelProfileRegistry"/>
+        <applicationService
+            serviceImplementation="com.example.localai.llm.ModelDiscoveryService"/>
+
+        <!-- Application Services: Settings -->
         <applicationService
             serviceImplementation="com.example.localai.settings.LocalAiSettingsState"/>
 

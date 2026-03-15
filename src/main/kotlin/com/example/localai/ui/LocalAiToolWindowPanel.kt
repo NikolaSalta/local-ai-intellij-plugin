@@ -8,7 +8,7 @@ import com.example.localai.model.TimelineEntry
 import com.example.localai.model.TimelineEventType
 import com.example.localai.services.ChatSessionService
 import com.example.localai.services.ContextAssemblerService
-import com.example.localai.services.OllamaClientService
+import com.example.localai.llm.OllamaClientService
 import com.example.localai.settings.LocalAiSettingsState
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project

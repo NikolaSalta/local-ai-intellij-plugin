@@ -1,4 +1,4 @@
-package com.example.localai.services
+package com.example.localai.llm
 
 import com.example.localai.model.ModelCategory
 import com.example.localai.model.ModelProfile

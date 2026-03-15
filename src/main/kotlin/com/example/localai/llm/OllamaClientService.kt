@@ -1,10 +1,9 @@
-package com.example.localai.services
+package com.example.localai.llm
 
 import com.example.localai.settings.LocalAiSettingsState
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.google.gson.reflect.TypeToken
 import com.intellij.openapi.diagnostic.Logger
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -14,12 +13,57 @@ import java.net.URI
 
 /**
  * Application-level service for communicating with the local Ollama API.
- * Empty constructor — reads settings via LocalAiSettingsState.instance.
+ *
+ * This is the core LLM runtime interface. All AI interactions go through this service.
+ * Local-first: default endpoint is http://127.0.0.1:11434
+ *
+ * Features:
+ * - Chat completion (non-streaming)
+ * - Embedding generation
+ * - Health check
+ * - Model listing
  */
 class OllamaClientService {
 
     private val logger = Logger.getInstance(OllamaClientService::class.java)
     private val gson = Gson()
+
+    // ==================== HEALTH CHECK ====================
+
+    /**
+     * Checks if Ollama is reachable and responding.
+     * Uses a short timeout (3s) to avoid blocking UI.
+     *
+     * @return true if Ollama is running and responding to API requests
+     */
+    fun healthCheck(): Boolean {
+        return try {
+            val settings = LocalAiSettingsState.instance
+            val url = "${settings.ollamaBaseUrl}/api/tags"
+            httpGet(url, 3000)
+            true
+        } catch (e: Exception) {
+            logger.info("Ollama health check failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Checks if Ollama is reachable (alias for healthCheck).
+     */
+    fun isAvailable(): Boolean = healthCheck()
+
+    /**
+     * Returns the base URL + status as a displayable string.
+     */
+    fun getStatusSummary(): String {
+        val settings = LocalAiSettingsState.instance
+        val healthy = healthCheck()
+        return if (healthy) "✅ Ollama: ${settings.ollamaBaseUrl} (connected)"
+        else "❌ Ollama: ${settings.ollamaBaseUrl} (unreachable)"
+    }
+
+    // ==================== MODEL LISTING ====================
 
     /**
      * Fetches the list of available models from Ollama.
@@ -38,6 +82,8 @@ class OllamaClientService {
             emptyList()
         }
     }
+
+    // ==================== CHAT ====================
 
     /**
      * Sends a chat request to Ollama (non-streaming).
@@ -76,6 +122,8 @@ class OllamaClientService {
         }
     }
 
+    // ==================== EMBEDDINGS ====================
+
     /**
      * Generates embeddings for the given text.
      * POST /api/embed
@@ -109,19 +157,7 @@ class OllamaClientService {
         }
     }
 
-    /**
-     * Checks if Ollama is reachable.
-     */
-    fun isAvailable(): Boolean {
-        return try {
-            val settings = LocalAiSettingsState.instance
-            val url = "${settings.ollamaBaseUrl}/api/tags"
-            httpGet(url, 5000)
-            true
-        } catch (e: Exception) {
-            false
-        }
-    }
+    // ==================== HTTP INTERNALS ====================
 
     private fun httpGet(url: String, timeoutMs: Int): String {
         val connection = URI(url).toURL().openConnection() as HttpURLConnection

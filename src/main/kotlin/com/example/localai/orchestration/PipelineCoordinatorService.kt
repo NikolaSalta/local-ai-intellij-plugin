@@ -176,7 +176,7 @@ class PipelineCoordinatorService(private val project: Project) {
         session: SessionState
     ): String {
         val client = com.intellij.openapi.application.ApplicationManager.getApplication()
-            .getService(com.example.localai.services.OllamaClientService::class.java)
+            .getService(com.example.localai.llm.OllamaClientService::class.java)
         val settings = com.example.localai.settings.LocalAiSettingsState.instance
 
         // Build context from evidence
@@ -731,7 +731,7 @@ ${interpretation.userIntent}
             return "Проект ${skeleton.projectName}. README не найден."
         }
         val client = com.intellij.openapi.application.ApplicationManager.getApplication()
-            .getService(com.example.localai.services.OllamaClientService::class.java)
+            .getService(com.example.localai.llm.OllamaClientService::class.java)
         val settings = com.example.localai.settings.LocalAiSettingsState.instance
         val messages = listOf(
             mapOf("role" to "system", "content" to "You are a senior engineer. Based on the README below, write 2-3 sentences describing what this project is, what it does, and what platform it targets. Write in Russian. Be factual."),

@@ -275,7 +275,7 @@ class ProjectAnalysisRunner(private val project: Project) {
             return "Проект ${facts.projectName}. README не найден — описание не может быть сгенерировано автоматически."
         }
 
-        val client = ApplicationManager.getApplication().getService(OllamaClientService::class.java)
+        val client = ApplicationManager.getApplication().getService(com.example.localai.llm.OllamaClientService::class.java)
 
         // Send ONLY the first 2000 chars of README — tiny context
         val shortReadme = facts.readme.take(2000)

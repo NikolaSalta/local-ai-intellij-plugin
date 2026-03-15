@@ -81,9 +81,56 @@ class PipelineCoordinatorService(private val project: Project) {
         session.pipelineStage = PipelineStage.FINAL_SYNTHESIS_DONE
         trace(session, TimelineEventType.SYNTHESIS_FINISH, "Synthesis complete")
 
-        // Combine
+        // Combine: orchestration metadata + deterministic report
         session.executionPhase = ExecutionPhase.READY
-        val finalReport = "A. Что это за проект\n$description\n\n$report"
+        val sb = StringBuilder()
+
+        // === Orchestration Metadata ===
+        sb.appendLine("═══ ORCHESTRATION METADATA ═══")
+        sb.appendLine()
+        sb.appendLine("A. Primary Target: ${interpretation.primaryTarget}")
+        sb.appendLine("B. Host Project: ${interpretation.hostProject}")
+        sb.appendLine("C. Task Type: ${interpretation.taskType}")
+        sb.appendLine("D. Execution Strategy: ${interpretation.executionStrategy}")
+        sb.appendLine()
+
+        // === Evidence Summary ===
+        sb.appendLine("═══ EVIDENCE ═══")
+        sb.appendLine()
+        val found = session.evidence.filter { it.status == EvidenceStatus.FOUND }
+        val notFound = session.evidence.filter { it.status == EvidenceStatus.NOT_FOUND }
+        sb.appendLine("I. Evidence Collected (${found.size}):")
+        for (ev in found) {
+            sb.appendLine("  ✅ ${ev.type}: ${ev.path}")
+        }
+        sb.appendLine()
+        if (notFound.isNotEmpty()) {
+            sb.appendLine("J. Missing Evidence (${notFound.size}):")
+            for (ev in notFound) {
+                sb.appendLine("  ❌ ${ev.type}: ${ev.path}")
+            }
+        } else {
+            sb.appendLine("J. Missing Evidence: none")
+        }
+        sb.appendLine()
+
+        // Pipeline info
+        sb.appendLine("K. Pipeline: ${session.pipelineStage}")
+        sb.appendLine("L. Repo Type: $repoType")
+        sb.appendLine("M. Evidence Gate: ${if (gateResult.passed) "PASSED (${gateResult.foundCount}/${gateResult.totalChecks})" else "FAILED — gaps: ${gateResult.gaps.joinToString(", ")}"}")
+        sb.appendLine()
+        sb.appendLine("═══ DETERMINISTIC REPORT ═══")
+        sb.appendLine()
+
+        // === Project Description (from LLM) ===
+        sb.appendLine("N. Что это за проект")
+        sb.appendLine(description)
+        sb.appendLine()
+
+        // === Deterministic sections (O+) ===
+        sb.append(report)
+
+        val finalReport = sb.toString()
 
         trace(session, TimelineEventType.FINAL_TEXT, "Report ready (${finalReport.length} chars)")
         return finalReport

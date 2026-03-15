@@ -46,6 +46,8 @@
             serviceImplementation="com.example.localai.orchestration.PipelineCoordinatorService"/>
         <projectService
             serviceImplementation="com.example.localai.orchestration.RequestOrchestratorService"/>
+        <projectService
+            serviceImplementation="com.example.localai.orchestration.ExecutionControlService"/>
 
         <!-- Retrieval Services -->
         <projectService
